@@ -1,0 +1,68 @@
+name: Import standalone tag app
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/bootstrap.yml]
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: working
+      - uses: actions/checkout@v4
+        with:
+          repository: shurli/immich-person-review
+          ref: ea5900e07668d93927f72086d88a653d54742954
+          path: donor
+          sparse-checkout: .refactor
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: shurli/immich-person-review
+          ref: 724b58b8343b6b3f425ec51d92ab00fd96eb2aac
+          path: baseline
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Assemble and test the independent source tree
+        shell: bash
+        run: |
+          python donor/.refactor/split.py --source baseline --person-out "$RUNNER_TEMP/split/person" --tag-out "$RUNNER_TEMP/split/tag"
+          (cd "$RUNNER_TEMP/split/tag" && npm ci --ignore-scripts --no-audit --no-fund && npm test && npm run check) | tee "$RUNNER_TEMP/split/tag-tests.txt"
+          docker build -t immich-tag-manager:0.1.0 "$RUNNER_TEMP/split/tag"
+          docker run --rm -d --name tag-smoke -p 127.0.0.1:3039:3000 immich-tag-manager:0.1.0
+          trap 'docker rm -f tag-smoke || true' EXIT
+          curl --retry 15 --retry-delay 1 --retry-connrefused --fail http://127.0.0.1:3039/healthz
+          curl --fail http://127.0.0.1:3039/tag-api/tags | python -c 'import json,sys; assert len(json.load(sys.stdin)["document"]["concepts"]) == 350'
+      - name: Commit standalone app without any donor dependency
+        working-directory: working
+        shell: bash
+        run: |
+          git fetch origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          rsync -a --exclude=node_modules/ "$RUNNER_TEMP/split/tag/" ./
+          git add -A -- . ':!.github'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: standalone Immich Tag Manager v0.1.0 with taxonomy and calibration'
+          git push origin HEAD:main
+      - name: Package sources and verification log
+        if: always()
+        shell: bash
+        run: |
+          if test -d "$RUNNER_TEMP/split/tag"; then
+            tar --exclude=node_modules -czf "$RUNNER_TEMP/split/tag-source.tar.gz" -C "$RUNNER_TEMP/split/tag" .
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tag-app-source
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/split/tag-source.tar.gz
+            ${{ runner.temp }}/split/tag-tests.txt
