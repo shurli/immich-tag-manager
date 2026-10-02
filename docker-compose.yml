@@ -1,25 +1,42 @@
 services:
   immich-tag-manager:
-    build: .
-    image: immich-tag-manager:0.1.0
     container_name: immich-tag-manager
-    restart: unless-stopped
+    image: ghcr.io/shurli/immich-tag-manager:latest
     ports:
       - "${TAG_MANAGER_PORT:-3031}:3000"
-    env_file:
-      - .env
+    networks:
+      - immich
+    restart: unless-stopped
     environment:
       PORT: "3000"
+      IMMICH_URL: "${IMMICH_URL:-http://immich_server:2283}"
+      IMMICH_EXTERNAL_URL: "${IMMICH_EXTERNAL_URL:-}"
+      # Ein explizit leerer API-Prefix bleibt erlaubt.
+      IMMICH_API_PREFIX: "${IMMICH_API_PREFIX-/api}"
+      IMMICH_API_KEY: "${IMMICH_API_KEY:-}"
+      IMMICH_MACHINE_LEARNING_URL: "${IMMICH_MACHINE_LEARNING_URL:-http://immich-machine-learning:3003}"
+
+      # Optional: Read-only-PostgreSQL fuer die Tag-Preview.
+      # Bestehende DB_*-Variablen bleiben als Fallback verwendbar.
+      IMMICH_DB_URL: "${IMMICH_DB_URL:-}"
+      IMMICH_DB_HOST: "${IMMICH_DB_HOST:-${DB_HOSTNAME:-}}"
+      IMMICH_DB_PORT: "${IMMICH_DB_PORT:-${DB_PORT:-5432}}"
+      IMMICH_DB_USER: "${IMMICH_DB_USER:-${DB_USERNAME:-immich_tag_manager}}"
+      IMMICH_DB_PASSWORD: "${IMMICH_DB_PASSWORD-${DB_PASSWORD:-}}"
+      IMMICH_DB_NAME: "${IMMICH_DB_NAME:-${DB_DATABASE_NAME:-immich}}"
+      IMMICH_DB_SSL: "${IMMICH_DB_SSL:-false}"
+
+      # Die bearbeitete Taxonomie bleibt im bisherigen persistenten Volume.
       TAG_TAXONOMY_PATH: /app/storage/tags.json
       TAG_TAXONOMY_DEFAULT_PATH: /app/defaults/tags.json
     volumes:
       - tag-taxonomy:/app/storage
-    networks:
-      - immich
+
 volumes:
   tag-taxonomy:
-    name: ${TAG_TAXONOMY_VOLUME:-immich-tag-manager-data}
+    name: "${TAG_TAXONOMY_VOLUME:-immich-tag-manager-data}"
+
 networks:
   immich:
     external: true
-    name: ${IMMICH_NETWORK:-immich_default}
+    name: "${IMMICH_NETWORK:-immich_default}"
